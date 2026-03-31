@@ -7,9 +7,10 @@
   <title>Grid</title>
   <style>
     :root {
-      /* Filled in by JS so the full grid stays visible; X/Y independent */
-      --cell-w: 40px;
-      --cell-h: 40px;
+      /* Default cell size (JS matches this; shrinks only when needed) */
+      --cell-size: max(40px, min(11vw, 52px));
+      --cell-w: var(--cell-size);
+      --cell-h: var(--cell-size);
       --gap: clamp(4px, 1.2vw, 6px);
       --empty: #e8eaef;
       --filled: #3d5a80;
@@ -26,18 +27,16 @@
 
     html {
       -webkit-text-size-adjust: 100%;
-      height: 100%;
     }
 
     body {
       margin: 0;
       min-height: 100vh;
       min-height: 100dvh;
-      height: 100%;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: #f4f5f8;
       padding: var(--safe-pad-t) var(--safe-pad-r) var(--safe-pad-b) var(--safe-pad);
@@ -52,7 +51,6 @@
       margin-bottom: clamp(12px, 3vw, 20px);
       width: 100%;
       max-width: 100%;
-      flex-shrink: 0;
     }
 
     .size-field {
@@ -132,13 +130,9 @@
     .grid-wrap {
       width: 100%;
       max-width: 100%;
-      flex: 1 1 auto;
-      min-height: 0;
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
       padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
       touch-action: pan-x pan-y;
     }
@@ -147,14 +141,13 @@
       display: grid;
       gap: var(--gap);
       margin: 0 auto;
-      flex-shrink: 0;
     }
 
     .cell {
       width: var(--cell-w);
       height: var(--cell-h);
-      min-width: 0;
-      min-height: 0;
+      min-width: var(--cell-w);
+      min-height: var(--cell-h);
       padding: 0;
       background: var(--empty);
       border: 2px solid var(--border);
@@ -235,30 +228,58 @@
         return Number.isFinite(n) ? n : 0;
       }
 
-      /** Gap in px from computed style (row/column gap assumed equal). */
+      /** Same as :root --gap: clamp(4px, 1.2vw, 6px) */
+      function naturalGapPx() {
+        const vw = window.innerWidth / 100;
+        return Math.max(4, Math.min(1.2 * vw, 6));
+      }
+
+      /** Same as :root --cell-size: max(40px, min(11vw, 52px)) */
+      function naturalCellSizePx() {
+        const vw = window.innerWidth / 100;
+        return Math.max(40, Math.min(11 * vw, 52));
+      }
+
+      /** Gap in px from computed style, or CSS-equivalent fallback. */
       function gapPx() {
         const g = getComputedStyle(gridEl).gap;
         if (g && g !== "normal") {
           const parts = g.trim().split(/\s+/);
-          return parsePx(parts[0]);
+          const x = parsePx(parts[0]);
+          if (x > 0) {
+            return x;
+          }
         }
-        return parsePx(getComputedStyle(gridEl).columnGap) || parsePx(getComputedStyle(gridEl).rowGap);
+        const cg = parsePx(getComputedStyle(gridEl).columnGap);
+        if (cg > 0) {
+          return cg;
+        }
+        return naturalGapPx();
       }
 
       function fitGridToWrap() {
-        const rect = gridWrap.getBoundingClientRect();
+        const natural = naturalCellSizePx();
         const gap = gapPx();
         const cols = Math.max(1, numCols);
         const rows = Math.max(1, numRows);
 
-        let availW = Math.max(0, rect.width);
-        let availH = Math.max(0, rect.height);
+        const wrap = gridWrap.getBoundingClientRect();
+        const bodyPadB = parsePx(getComputedStyle(document.body).paddingBottom) || 0;
+        const wrapPadB = parsePx(getComputedStyle(gridWrap).paddingBottom) || 0;
+        const vv = window.visualViewport;
+        const viewBottom = (vv ? vv.offsetTop : 0) + (vv ? vv.height : window.innerHeight);
+
+        const availW = Math.max(0, gridWrap.clientWidth);
+        const availH = Math.max(0, viewBottom - wrap.top - bodyPadB - wrapPadB);
 
         const totalGapW = gap * Math.max(0, cols - 1);
         const totalGapH = gap * Math.max(0, rows - 1);
 
-        const cellW = Math.max(0, (availW - totalGapW) / cols);
-        const cellH = Math.max(0, (availH - totalGapH) / rows);
+        const fitW = (availW - totalGapW) / cols;
+        const fitH = (availH - totalGapH) / rows;
+
+        const cellW = Math.min(natural, Math.max(0, fitW));
+        const cellH = Math.min(natural, Math.max(0, fitH));
 
         gridEl.style.setProperty("--cell-w", cellW + "px");
         gridEl.style.setProperty("--cell-h", cellH + "px");
@@ -314,7 +335,7 @@
         gridEl.style.gridTemplateRows = "repeat(" + numRows + ", var(--cell-h))";
         gridEl.setAttribute(
           "aria-label",
-          numRows + " by " + numCols + " grid of cells"
+          numRows + " by " + numCols + " grid of squares"
         );
 
         for (let r = 0; r < numRows; r++) {
