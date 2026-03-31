@@ -7,8 +7,9 @@
   <title>Grid</title>
   <style>
     :root {
-      /* Balance tap size vs wide grids; scroll when needed */
-      --cell-size: max(40px, min(11vw, 52px));
+      /* Filled in by JS so the full grid stays visible; X/Y independent */
+      --cell-w: 40px;
+      --cell-h: 40px;
       --gap: clamp(4px, 1.2vw, 6px);
       --empty: #e8eaef;
       --filled: #3d5a80;
@@ -25,16 +26,18 @@
 
     html {
       -webkit-text-size-adjust: 100%;
+      height: 100%;
     }
 
     body {
       margin: 0;
       min-height: 100vh;
       min-height: 100dvh;
+      height: 100%;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: #f4f5f8;
       padding: var(--safe-pad-t) var(--safe-pad-r) var(--safe-pad-b) var(--safe-pad);
@@ -49,6 +52,7 @@
       margin-bottom: clamp(12px, 3vw, 20px);
       width: 100%;
       max-width: 100%;
+      flex-shrink: 0;
     }
 
     .size-field {
@@ -64,7 +68,6 @@
       width: 4.25rem;
       min-height: 44px;
       padding: 8px 10px;
-      /* 16px+ prevents iOS zoom-on-focus */
       font-size: 16px;
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -129,9 +132,13 @@
     .grid-wrap {
       width: 100%;
       max-width: 100%;
-      overflow: auto;
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior-x: contain;
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
       padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
       touch-action: pan-x pan-y;
     }
@@ -140,13 +147,14 @@
       display: grid;
       gap: var(--gap);
       margin: 0 auto;
+      flex-shrink: 0;
     }
 
     .cell {
-      width: var(--cell-size);
-      height: var(--cell-size);
-      min-width: var(--cell-size);
-      min-height: var(--cell-size);
+      width: var(--cell-w);
+      height: var(--cell-h);
+      min-width: 0;
+      min-height: 0;
       padding: 0;
       background: var(--empty);
       border: 2px solid var(--border);
@@ -204,13 +212,14 @@
       linear
     </label>
   </div>
-  <div class="grid-wrap">
+  <div class="grid-wrap" id="gridWrap">
     <div class="grid" id="grid"></div>
   </div>
 
   <script>
     (function () {
       const MAX_DIM = 64;
+      const gridWrap = document.getElementById("gridWrap");
       const gridEl = document.getElementById("grid");
       const rowsInput = document.getElementById("rowsInput");
       const colsInput = document.getElementById("colsInput");
@@ -220,6 +229,40 @@
       const cells = [];
       let numRows = 3;
       let numCols = 16;
+
+      function parsePx(value) {
+        const n = parseFloat(value);
+        return Number.isFinite(n) ? n : 0;
+      }
+
+      /** Gap in px from computed style (row/column gap assumed equal). */
+      function gapPx() {
+        const g = getComputedStyle(gridEl).gap;
+        if (g && g !== "normal") {
+          const parts = g.trim().split(/\s+/);
+          return parsePx(parts[0]);
+        }
+        return parsePx(getComputedStyle(gridEl).columnGap) || parsePx(getComputedStyle(gridEl).rowGap);
+      }
+
+      function fitGridToWrap() {
+        const rect = gridWrap.getBoundingClientRect();
+        const gap = gapPx();
+        const cols = Math.max(1, numCols);
+        const rows = Math.max(1, numRows);
+
+        let availW = Math.max(0, rect.width);
+        let availH = Math.max(0, rect.height);
+
+        const totalGapW = gap * Math.max(0, cols - 1);
+        const totalGapH = gap * Math.max(0, rows - 1);
+
+        const cellW = Math.max(0, (availW - totalGapW) / cols);
+        const cellH = Math.max(0, (availH - totalGapH) / rows);
+
+        gridEl.style.setProperty("--cell-w", cellW + "px");
+        gridEl.style.setProperty("--cell-h", cellH + "px");
+      }
 
       function cellAt(row, col) {
         return cells[row * numCols + col];
@@ -241,7 +284,6 @@
         return { r: r, c: c };
       }
 
-      /** When a column has multiple fills, keep only the bottommost (largest row index). */
       function enforceLinear() {
         for (let c = 0; c < numCols; c++) {
           const filledRows = [];
@@ -268,11 +310,11 @@
         numCols = dim.c;
         cells.length = 0;
         gridEl.innerHTML = "";
-        gridEl.style.gridTemplateColumns = "repeat(" + numCols + ", var(--cell-size))";
-        gridEl.style.gridTemplateRows = "repeat(" + numRows + ", var(--cell-size))";
+        gridEl.style.gridTemplateColumns = "repeat(" + numCols + ", var(--cell-w))";
+        gridEl.style.gridTemplateRows = "repeat(" + numRows + ", var(--cell-h))";
         gridEl.setAttribute(
           "aria-label",
-          numRows + " by " + numCols + " grid of squares"
+          numRows + " by " + numCols + " grid of cells"
         );
 
         for (let r = 0; r < numRows; r++) {
@@ -301,6 +343,10 @@
             cells.push(cell);
           }
         }
+
+        requestAnimationFrame(function () {
+          fitGridToWrap();
+        });
       }
 
       rowsInput.addEventListener("change", buildGrid);
@@ -333,6 +379,23 @@
           });
         }
       });
+
+      const ro = new ResizeObserver(function () {
+        fitGridToWrap();
+      });
+      ro.observe(gridWrap);
+
+      window.addEventListener("orientationchange", function () {
+        requestAnimationFrame(function () {
+          fitGridToWrap();
+        });
+      });
+
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", function () {
+          requestAnimationFrame(fitGridToWrap);
+        });
+      }
 
       buildGrid();
     })();
